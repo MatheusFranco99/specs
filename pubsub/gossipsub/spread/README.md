@@ -82,41 +82,28 @@ stones to avoid costly long-distance paths. The following sections detail this d
 
 ## Terms and definitions
 
-Bernoulli Trial - A random experiment with exactly two outcomes (success/failure), where success
-occurs with a fixed probability `p`.
+- **Bernoulli Trial**: A random experiment with exactly two outcomes (success/failure), where success occurs with a fixed probability `p`.
 
-Cluster - A group of nearby nodes, i.e., nodes that are close to each other in the virtual
-coordinate space and therefore communicate with low latency.
+- **Cluster**: A group of nearby nodes, i.e., nodes that are close to each other in the virtual coordinate space and therefore communicate with low latency.
 
-Curious Nodes (Honest-but-Curious Observers) - Nodes that follow the protocol correctly but attempt
-to infer additional information (e.g., the originator of a given message) from observed traffic
+- **Curious Nodes (Honest-but-Curious Observers)**:  Nodes that follow the protocol correctly but attempt to infer additional information (e.g., the originator of a given message) from observed traffic
 patterns.
 
-Deanonymization Accuracy - The fraction of times an adversary correctly infers the original sender
-of a message, based on observations available to attacker-controlled nodes.
+- **Deanonymization Accuracy**: The fraction of times an adversary correctly infers the original sender of a message, based on observations available to attacker-controlled nodes.
 
-Fanout - The number of peers to which a node forwards a message during a dissemination step.
+- **Fanout**: The number of peers to which a node forwards a message during a dissemination step.
 
-Gossip Protocol - A distributed communication protocol in which nodes repeatedly forward information
-to a subset of neighboring peers, resulting in probabilistic, eventual delivery to all nodes.
+- **Gossip Protocol**: A distributed communication protocol in which nodes repeatedly forward information to a subset of neighboring peers, resulting in probabilistic, eventual delivery to all nodes.
 
-Random Walk - A forwarding strategy in which each node forwards a message to a single randomly
-selected peer.
+- **Random Walk**: A forwarding strategy in which each node forwards a message to a single randomly selected peer.
 
-Cobra Walk (Coalescing-Branching Random Walk) - A variant of the random walk in which each node
-forwards a message to a number of random neighbors given by a branching factor, allowing the walk to
-occasionally branch out instead of always forwarding to a single peer.
+- **Cobra Walk (Coalescing-Branching Random Walk)**: A variant of the random walk in which each node forwards a message to a number of random neighbors given by a branching factor, allowing the walk to occasionally branch out instead of always forwarding to a single peer.
 
-Stretch - A performance metric defined as the ratio between the actual end-to-end delivery latency
-and the direct (usually optimal) communication latency between sender and receiver.
+- **Stretch**: A performance metric defined as the ratio between the actual end-to-end delivery latency and the direct (usually optimal) communication latency between sender and receiver.
 
-Virtual Coordinates - Synthetic coordinates assigned to nodes in a geometric space such that
-distances between coordinates approximate pairwise network latency, allowing latency estimation
-without direct measurement.
+- **Virtual Coordinates**: Synthetic coordinates assigned to nodes in a geometric space such that distances between coordinates approximate pairwise network latency, allowing latency estimation without direct measurement.
 
-Voronoi Diagram (Dirichlet Tessellation) - A partition of a space into regions according to a set of
-reference points (centroids), where each region contains the portion of the space that is closer to
-its centroid than to any other.
+- **Voronoi Diagram (Dirichlet Tessellation)**: A partition of a space into regions according to a set of reference points (centroids), where each region contains the portion of the space that is closer to its centroid than to any other.
 
 ## Design rationale
 
