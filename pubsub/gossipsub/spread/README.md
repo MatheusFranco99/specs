@@ -18,6 +18,17 @@ SPREAD consists of two mechanisms:
 
 SPREAD is implemented as a protocol extension on top of the go-libp2p-pubsub library. The remainder of this document details SPREAD's motivation, rationale, and protocol design.
 
+## Motivation
+
+Despite the general understanding that gossip protocols can aid in protecting the anonymity of the original sender of any given message, GossipSub was not designed for and is not able to provide such guarantees. In particular, a simple attack on the GossipSub layer is possible by observing message timing at a small set of listener nodes, enabling a centralized coordinator to correlate timings and infer the true source of gossip messages. This class of passive, timing-based attack was first demonstrated on Bitcoin, where transactions were linked to the IP addresses that originated them from a small number of supernodes ([Biryukov et al.](https://doi.org/10.1145/2660267.2660379), [Fanti and Viswanath](https://proceedings.neurips.cc/paper_files/paper/2017/file/6c3cf77d52820cd0fe646d38bc2145ca-Paper.pdf)), and it was later shown to map Ethereum validators to their peer IDs and IP addresses by monitoring attestation propagation over a few epochs (Sharma et al.; [Heimbach et al.](https://www.usenix.org/conference/usenixsecurity25/presentation/heimbach); [Rhea](https://ethresear.ch/t/packetology-validator-privacy/7547)). This is possible despite GossipSub’s use of randomized forwarding to obscure message paths because a validator’s immediate peers (i.e., the validator's direct peers in the gossip overlay) consistently receive and propagate its messages noticeably earlier than others. As such, by deploying a few tens of listener nodes it becomes highly likely that, after a few epochs, one of the listener nodes will become a direct peer (and remain so for several subsequent epochs). Therefore, by keeping track of the first listener node to hear a message over multiple consensus epochs (and which network address that message came from), the coordinator is eventually able to reliably map validators to their network identities with high confidence. Once identified, validators can be selectively targeted (e.g., through denial-of-service), leading to slashing due to missed duties or economic attacks. Crucially, this deanonymization does not rely on any privileged access and can be mounted only by listening to traffic at a small number of well-behaved (honest but curious) observers.
+
+This vulnerability stems from a fundamental tension in the design of gossip protocols: increasing fanout, and more generally dissemination speed, reduces sender anonymity, whereas limiting exposure through low fanout improves privacy at the cost of propagation delay. GossipSub occupies an unfavorable point in this tradeoff: it leaks enough structural information to enable deanonymization, yet disseminates inefficiently, since its latency-oblivious forwarding paths amplify both delay and overhead.
+
+Prior work has proposed defenses against this class of attack, most notably [Dandelion](https://doi.org/10.1145/3084459) and [Dandelion++](https://doi.org/10.1145/3224424), which achieve formally analyzed sender-anonymity guarantees by prepending a random-walk obfuscation phase to dissemination. These guarantees, however, carry a latency cost that has prevented adoption in latency-sensitive settings: the Ethereum community concluded that, "because of latency constraints [...] this proposal [Dandelion++] is infeasible for the Ethereum consensus layer (at least not for any strong anonymity guarantees)" ([EthResearch discussion](https://ethresear.ch/t/ethereum-consensus-layer-validator-anonymity-using-dandelion-and-rln-conclusion/12698)). This tension tends to intensify with the planned reduction of Ethereum's slot time from 12 to 6 seconds ([EIP-7782](https://eips.ethereum.org/EIPS/eip-7782)), imposing even stricter timing requirements on the gossip layer. Thus, deployments must provide the required performance and sender-anonymity defenses simultaneously.
+
+SPREAD is designed to address this compound challenge by separating the random-walk hops, which provide anonymity and are kept local, from the wide-area hops, which use nearby nodes as stepping stones to avoid costly long-distance paths. The following sections detail this design.
+
+
 ## Terms and definitions
 
 Bernoulli Trial - A random experiment with exactly two outcomes (success/failure), where success occurs with a fixed probability `p`.
@@ -42,18 +53,7 @@ Virtual Coordinates - Synthetic coordinates assigned to nodes in a geometric spa
 
 Voronoi Diagram (Dirichlet Tessellation) - A partition of a space into regions according to a set of reference points (centroids), where each region contains the portion of the space that is closer to its centroid than to any other.
 
-## Motivation
-
-Despite the general understanding that gossip protocols can aid in protecting the anonymity of the original sender of any given message, GossipSub was not designed for and is not able to provide such guarantees. In particular, a simple attack on the GossipSub layer is possible by observing message timing at a small set of listener nodes, enabling a centralized coordinator to correlate timings and infer the true source of gossip messages. This class of passive, timing-based attack was first demonstrated on Bitcoin, where transactions were linked to the IP addresses that originated them from a small number of supernodes ([Biryukov et al.](https://doi.org/10.1145/2660267.2660379), [Fanti and Viswanath](https://proceedings.neurips.cc/paper_files/paper/2017/file/6c3cf77d52820cd0fe646d38bc2145ca-Paper.pdf)), and it was later shown to map Ethereum validators to their peer IDs and IP addresses by monitoring attestation propagation over a few epochs (Sharma et al.; [Heimbach et al.](https://www.usenix.org/conference/usenixsecurity25/presentation/heimbach); [Rhea](https://ethresear.ch/t/packetology-validator-privacy/7547)). This is possible despite GossipSub’s use of randomized forwarding to obscure message paths because a validator’s immediate peers (i.e., the validator's direct peers in the gossip overlay) consistently receive and propagate its messages noticeably earlier than others. As such, by deploying a few tens of listener nodes it becomes highly likely that, after a few epochs, one of the listener nodes will become a direct peer (and remain so for several subsequent epochs). Therefore, by keeping track of the first listener node to hear a message over multiple consensus epochs (and which network address that message came from), the coordinator is eventually able to reliably map validators to their network identities with high confidence. Once identified, validators can be selectively targeted (e.g., through denial-of-service), leading to slashing due to missed duties or economic attacks. Crucially, this deanonymization does not rely on any privileged access and can be mounted only by listening to traffic at a small number of well-behaved (honest but curious) observers.
-
-This vulnerability stems from a fundamental tension in the design of gossip protocols: increasing fanout, and more generally dissemination speed, reduces sender anonymity, whereas limiting exposure through low fanout improves privacy at the cost of propagation delay. GossipSub occupies an unfavorable point in this tradeoff: it leaks enough structural information to enable deanonymization, yet disseminates inefficiently, since its latency-oblivious forwarding paths amplify both delay and overhead.
-
-Prior work has proposed defenses against this class of attack, most notably [Dandelion](https://doi.org/10.1145/3084459) and [Dandelion++](https://doi.org/10.1145/3224424), which achieve formally analyzed sender-anonymity guarantees by prepending a random-walk obfuscation phase to dissemination. These guarantees, however, carry a latency cost that has prevented adoption in latency-sensitive settings: the Ethereum community concluded that, "because of latency constraints [...] this proposal [Dandelion++] is infeasible for the Ethereum consensus layer (at least not for any strong anonymity guarantees)" ([EthResearch discussion](https://ethresear.ch/t/ethereum-consensus-layer-validator-anonymity-using-dandelion-and-rln-conclusion/12698)). This tension tends to intensify with the planned reduction of Ethereum's slot time from 12 to 6 seconds ([EIP-7782](https://eips.ethereum.org/EIPS/eip-7782)), imposing even stricter timing requirements on the gossip layer. Thus, deployments must provide the required performance and sender-anonymity defenses simultaneously.
-
-SPREAD is designed to address this compound challenge by separating the random-walk hops, which provide anonymity and are kept local, from the wide-area hops, which use nearby nodes as stepping stones to avoid costly long-distance paths. The following sections detail this design.
-
-
-## Design of SPREAD: insights and overview
+## Design rationale
 
 Formal work by [Guerraoui et al.](https://arxiv.org/abs/2308.02477) showed that anonymity-preserving gossip requires a strong random walk component, in which nodes often forward a message to a single overlay neighbor, so that the source remains difficult to identify. The [Dandelion family of protocols](https://arxiv.org/abs/1805.11060) applies this technique by starting with a random-walk phase and probabilistically switching to high-fanout dissemination.
 
@@ -70,9 +70,13 @@ Inter-cluster hops pose a second challenge: chosen carelessly, they are just as 
 SPREAD, however, is fully decentralized: no single node holds a global view of the clusters or their connections. Instead, each node approximates the idealized routing locally using virtual coordinates, a scheme that securely assigns each node Euclidean coordinates whose distances estimate pairwise latency [Vivaldi, Newton]. With these coordinates, a node defines its cluster as the closest t% of its overlay neighbors, and classifies each remaining (non-cluster) neighbor by whether a closer non-cluster neighbor lies in roughly the same direction, i.e., within a configurable angular interval of its bearing in the coordinate space. Neighbors with such a closer, aligned alternative are occluded: the closer node can serve as a stepping stone, so they are excluded from forwarding (occluded_remote). The rest are eligible for inter-cluster hops (unobstructed_remote).
 
 
-## Protocol overview
+## Protocol specification
 
 SPREAD comprises two components running in parallel: a maintenance algorithm that manages a node's overlay peers (neighbors) and their secure virtual coordinates, and the dissemination protocol that publishes and propagates gossip messages. Using the criteria described above, the maintenance algorithm partitions the neighbors of node i into three subsets: cluster_i, occluded_remote_i, and unobstructed_remote_i.
+
+The key words MUST, MUST NOT, SHOULD, SHOULD NOT, and MAY are to be interpreted as described in [RFC 2119](https://www.rfc-editor.org/rfc/rfc2119).
+
+### Dissemination
 
 Given this overlay state, the dissemination protocol combines intra-cluster random walks, which provide anonymity, with inter-cluster forwarding through unobstructed remote neighbors, which provides efficient global dissemination. Upon receiving or publishing a message, a node decides between these two behaviors by biased coin flips, with biases set by system parameters. The pseudocode below specifies how a message is broadcast once the overlay state is established.
 
@@ -110,7 +114,7 @@ A node may propagate the same message multiple times, and the algorithm delibera
 
 This message pull mechanism is also valuable for robustness in two additional scenarios. First, under churn, a succession of node failures or departures can prevent the direct propagation from being effective, and the heartbeat-and-pull mechanism lets nodes recover the messages they missed. Second, it helps defend against Byzantine nodes: while simple cryptography prevents such nodes from tampering with message contents, they can still deliberately delay or refuse to forward messages, endangering progress, which the heartbeats and pulls counter.
 
-## Extension negotiation and wire format
+### Extension negotiation
 
 We define SPREAD as an [extension](../gossipsub-v1.3.md) of GossipSub rather than as a separate
 protocol, which makes it an optional feature that a node may choose to support, without requiring
@@ -118,12 +122,6 @@ agreement from the rest of the network.
 Currently, its
 `ControlExtensions` and `RPC` field numbers lie in the experimental range, and implementations MUST
 use the `/meshsub/1.3.0` protocol ID or a later one.
-
-The key words MUST, MUST NOT, SHOULD, SHOULD
-NOT, and MAY are to be interpreted as described in
-[RFC 2119](https://www.rfc-editor.org/rfc/rfc2119).
-
-### Advertising support
 
 A node that supports SPREAD MUST set `ControlExtensions.spread = true` in the Extensions control
 message it sends as part of the first RPC on the stream, as specified by GossipSub v1.3. As with
