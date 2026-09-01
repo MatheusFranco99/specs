@@ -110,13 +110,99 @@ A node may propagate the same message multiple times, and the algorithm delibera
 
 This message pull mechanism is also valuable for robustness in two additional scenarios. First, under churn, a succession of node failures or departures can prevent the direct propagation from being effective, and the heartbeat-and-pull mechanism lets nodes recover the messages they missed. Second, it helps defend against Byzantine nodes: while simple cryptography prevents such nodes from tampering with message contents, they can still deliberately delay or refuse to forward messages, endangering progress, which the heartbeats and pulls counter.
 
-## Using protocol extensions and coexistence with GossipSub peers
+## Extension negotiation and wire format
 
-We implement SPREAD as an extension of GossipSub rather than as a separate protocol. In this case, it's an optional feature that a node may choose to support, without requiring agreement from the rest of the network. Each node advertises the extensions it supports through dedicated control fields that are already exchanged when two peers connect, and SPREAD becomes active on a given connection only when both endpoints advertise support for it. Nodes that do not support the extension, or that pair with a peer that does not, simply continue to use standard GossipSub.
+We define SPREAD as an [extension](../gossipsub-v1.3.md) of GossipSub rather than as a separate
+protocol, which makes it an optional feature that a node may choose to support, without requiring
+agreement from the rest of the network.
+Currently, its
+`ControlExtensions` and `RPC` field numbers lie in the experimental range, and implementations MUST
+use the `/meshsub/1.3.0` protocol ID or a later one.
 
-To keep its footprint minimal, SPREAD triggers its dissemination without introducing a new message type. A published message uses the standard GossipSub envelope, with an additional field that marks it as a SPREAD message. When a SPREAD-capable node receives such a message, it applies the SPREAD propagation rules and copies the marker onto the messages it relays, so that SPREAD behavior is preserved along the path; a node that does not support the extension simply ignores the marker and forwards the message using standard GossipSub. This forward compatibility is what enables mixed deployments and a smooth, incremental adoption path: a SPREAD message benefits from its privacy-enhancing and efficient dissemination until it reaches a node that does not support the extension, which means that partial anonymity and performance gains are already possible before network-wide adoption.
+The key words MUST, MUST NOT, SHOULD, SHOULD
+NOT, and MAY are to be interpreted as described in
+[RFC 2119](https://www.rfc-editor.org/rfc/rfc2119).
 
-To build the clusters used for propagation, each SPREAD-capable node maintains virtual coordinates for itself and for the other SPREAD-capable peers it knows about. These coordinates are produced by a Vivaldi process fed with round-trip-time measurements from periodic probes, which is the only addition SPREAD makes to the communication profile of a node. To prevent malicious peers from distorting the coordinate space, each coordinate update is validated by Newton-based checks and rejected whenever it would break a physical invariant.
+### Advertising support
+
+A node that supports SPREAD MUST set `ControlExtensions.spread = true` in the Extensions control
+message it sends as part of the first RPC on the stream, as specified by GossipSub v1.3. As with
+every GossipSub extension, this is an advertisement rather than a negotiation, in the sense that each
+peer only describes itself, and then each peer decides its own behavior by combining the two advertisements.
+
+A node MUST NOT apply SPREAD forwarding toward a peer that has not advertised `spread`, and MUST NOT
+include the `SpreadExtension` message in an RPC sent to such a peer. Peers that have not advertised
+the extension are therefore served by standard GossipSub forwarding, and a node whose peers all lack
+it behaves exactly as an unmodified GossipSub node. Conversely, a node that has advertised `spread`
+MUST still accept and forward messages that carry no SPREAD marker, using standard GossipSub rules,
+since SPREAD selection applies per message and not per connection.
+
+### Marking messages
+
+To keep its footprint minimal, SPREAD does not introduce a new message type. A SPREAD message
+travels in the standard GossipSub envelope, and the RPC that carries it names which of its entries
+the extension applies to.
+
+```protobuf
+message ControlExtensions {
+  // ...
+  optional bool spread = 6492435;
+}
+
+message RPC {
+  repeated Message publish = 2;
+  // ...
+  optional SpreadExtension spread = 6492435;
+}
+
+message SpreadExtension {
+  // Zero-based indices into RPC.publish identifying the messages that are
+  // being disseminated via SPREAD.
+  repeated uint32 publishIndices = 1;
+}
+```
+
+These fields are registered in [`extensions.proto`](../extensions/extensions.proto), which
+implementations MUST use. The `publishIndices` field identifies, per RPC, which of the `publish`
+entries are SPREAD messages, so that the marker is carried per message rather than per RPC, which
+matters because an RPC MAY batch SPREAD and non-SPREAD messages together.
+
+- Indices are zero-based and refer to `RPC.publish` of the same RPC. A receiver MUST ignore any index
+  that is out of range, as well as duplicate indices.
+- An absent `SpreadExtension`, or one with an empty `publishIndices`, means that no message in the RPC
+  is a SPREAD message.
+- A receiver that supports SPREAD MUST apply the propagation rules of this document to each marked
+  message, and when it relays such a message it MUST mark it again in the RPCs it sends to
+  SPREAD-capable peers, so that SPREAD behavior is preserved along the path.
+- A receiver that does not support SPREAD ignores the field, which is the default behavior of
+  protobuf parsers, and forwards the message using standard GossipSub.
+
+This last behavior is what enables mixed deployments and a smooth, incremental adoption path, since a
+message benefits from SPREAD's dissemination until it reaches a node that does not support the
+extension, which means that partial anonymity and performance gains are already possible before
+network-wide adoption.
+
+### Coordinate maintenance
+
+To build the clusters used for propagation, each SPREAD-capable node maintains virtual coordinates
+for itself and for the other SPREAD-capable peers it knows about. These coordinates are produced by a
+Vivaldi process fed with round-trip-time measurements from periodic probes, which is the only
+addition SPREAD makes to the communication profile of a node. To prevent malicious peers from
+distorting the coordinate space, each coordinate update MUST be validated by Newton-based checks and
+rejected whenever it would break a physical invariant.
+
+## Security considerations
+
+SPREAD hides which node originated a message at the network layer, but it cannot hide an originator
+that the message itself names. Under GossipSub's signing policies, a published message carries the
+`from`, `seqno`, and `signature` fields, which identify the publishing peer inside the payload and
+therefore render the random walk irrelevant, since an adversary can simply read the source off any
+copy of the message it receives. As such, deployments that adopt SPREAD for its anonymity properties
+MUST configure the corresponding topics with `StrictNoSign`, where these fields are absent, as is
+already the case in Ethereum's consensus layer. A deployment interested only in SPREAD's efficiency
+gains, however, can use it under any signing policy, since topology-aware dissemination does not
+depend on the sender being hidden. In that case the anonymity results reported below simply do not
+apply, and an implementation SHOULD make that explicit rather than leave the operator to assume otherwise.
 
 ## Evaluation
 
